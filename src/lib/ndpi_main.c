@@ -3383,8 +3383,10 @@ static u_int8_t ndpi_detection_get_l4_internal(struct ndpi_detection_module_stru
 					       const u_int8_t ** l4_return, u_int16_t * l4_len_return,
 					       u_int8_t * l4_protocol_return, u_int32_t flags)
 {
+  struct ndpi_iphdr iph_buf;
   const struct ndpi_iphdr *iph = NULL;
 #ifdef NDPI_DETECTION_SUPPORT_IPV6
+  struct ndpi_ipv6hdr iph_v6_buf;
   const struct ndpi_ipv6hdr *iph_v6 = NULL;
 #endif
   u_int16_t l4len = 0;
@@ -3394,7 +3396,7 @@ static u_int8_t ndpi_detection_get_l4_internal(struct ndpi_detection_module_stru
   if(l3 == NULL || l3_len < sizeof(struct ndpi_iphdr))
     return 1;
 
-  iph = (const struct ndpi_iphdr *) l3;
+  iph = memcpy(&iph_buf, l3, sizeof(struct ndpi_iphdr));
 
   if(iph->version == IPVERSION && iph->ihl >= 5) {
     NDPI_LOG_DBG2(ndpi_struct, "ipv4 header\n");
@@ -3402,7 +3404,7 @@ static u_int8_t ndpi_detection_get_l4_internal(struct ndpi_detection_module_stru
 #ifdef NDPI_DETECTION_SUPPORT_IPV6
   else if(iph->version == 6 && l3_len >= sizeof(struct ndpi_ipv6hdr)) {
     NDPI_LOG_DBG2(ndpi_struct, "ipv6 header\n");
-    iph_v6 = (const struct ndpi_ipv6hdr *) iph;
+    iph_v6 = memcpy(&iph_v6_buf, l3, sizeof(struct ndpi_ipv6hdr));
     iph = NULL;
   }
 #endif
