@@ -43,9 +43,13 @@ void ndpi_search_wireguard(struct ndpi_detection_module_struct
 			   *ndpi_struct, struct ndpi_flow_struct *flow)
 {
   struct ndpi_packet_struct *packet = &flow->packet;
+  const u_int8_t *payload = packet->payload;
+  /*
+   * The first byte of the payload is the message type.
+   */
+  u_int8_t message_type = payload[0];
 
   NDPI_LOG_DBG(ndpi_struct, "search WireGuard\n");
-
   /*
    * A transport packet contains at minimum the following fields:
    *  u8 message_type
@@ -56,31 +60,33 @@ void ndpi_search_wireguard(struct ndpi_detection_module_struct
    * In the case of a keepalive message, the encapsulated packet will have
    * zero length, but will still have a 16 byte poly1305 authentication tag.
    * Thus, packet->payload will be at least 32 bytes in size.
-   * Note that handshake packets have a slightly different structure but they are larger.
+   * Note that handshake packets have a slightly different structure, but they are larger.
    */
-  if (packet->payload_packet_len >= 32) {
-    const u_int8_t *payload = packet->payload;
-    /*
-     * The first byte of the payload is the message type.
-     * Message type can have one of the following values:
-     * 1) Handshake Initiation
-     * 2) Handshake Response
-     * 3) Cookie Reply
-     * 4) Transport Data
-     */
-    u_int8_t message_type = payload[0];
-    if (message_type >= 1 && message_type <= 4) {
-      /*
-       * The next three bytes of the payload are reserved and set to zero.
-       */
-      if (payload[1] == 0 && payload[2] == 0 && payload[3] == 0) {
-        ndpi_set_detected_protocol(ndpi_struct, flow, NDPI_PROTOCOL_WIREGUARD, NDPI_PROTOCOL_UNKNOWN);
-        return;
-      }
-    }
+  if (packet->payload_packet_len < 32) {
+    NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
+    return;
+  }
+  /*
+   * The next three bytes after the message type are reserved and set to zero.
+   */
+  if (payload[1] != 0 || payload[2] != 0 || payload[3] != 0) {
+    NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
+    return;
+  }
+  /*
+   * Message type can have one of the following values:
+   * 1) Handshake Initiation
+   * 2) Handshake Response
+   * 3) Cookie Reply
+   * 4) Transport Data
+   */
+  if (message_type == 0 || message_type > 4) {
+    NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
+    return;
   }
 
-  NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
+  ndpi_set_detected_protocol(ndpi_struct, flow, NDPI_PROTOCOL_WIREGUARD, NDPI_PROTOCOL_UNKNOWN);
+  return;
 }
 
 void init_wireguard_dissector(struct ndpi_detection_module_struct *ndpi_struct, u_int32_t *id, NDPI_PROTOCOL_BITMASK *detection_bitmask)
