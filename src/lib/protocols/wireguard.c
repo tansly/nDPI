@@ -82,6 +82,9 @@ void ndpi_search_wireguard(struct ndpi_detection_module_struct
    * look for consistent sender/receiver index fields. We also exploit the fact
    * that handshake messages always have a fixed size.
    *
+   * Stages 1-2 means we are processing a handshake sequence.
+   * Stages 3-4 means we are processing a transport packet sequence.
+   *
    * Message type can be one of the following:
    * 1) Handshake Initiation (148 bytes)
    * 2) Handshake Response (92 bytes)
@@ -90,9 +93,12 @@ void ndpi_search_wireguard(struct ndpi_detection_module_struct
    */
   if (message_type == WG_TYPE_HANDSHAKE_INITIATION && packet->payload_packet_len == 148) {
     u_int32_t sender_index = get_u_int32_t(payload, 4);
+    /*
+     * We always start a new detection stage on a handshake initiation.
+     */
     flow->l4.udp.wireguard_stage = 1 + packet->packet_direction;
     flow->l4.udp.wireguard_peer_index[packet->packet_direction] = sender_index;
-    return;
+    /* need more packets before deciding */
   } else if (message_type == WG_TYPE_HANDSHAKE_RESPONSE && packet->payload_packet_len == 92) {
     if (flow->l4.udp.wireguard_stage == 2 - packet->packet_direction) {
       /*
@@ -103,9 +109,11 @@ void ndpi_search_wireguard(struct ndpi_detection_module_struct
       u_int32_t receiver_index = get_u_int32_t(payload, 8);
       if (receiver_index == flow->l4.udp.wireguard_peer_index[1 - packet->packet_direction]) {
         ndpi_set_detected_protocol(ndpi_struct, flow, NDPI_PROTOCOL_WIREGUARD, NDPI_PROTOCOL_UNKNOWN);
-        return;
+      } else {
+        NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
       }
     }
+    /* need more packets before deciding */
   } else if (message_type == WG_TYPE_COOKIE_REPLY && packet->payload_packet_len == 64) {
     /*
      * A cookie reply is sent as response to a handshake initiation when under load,
@@ -117,16 +125,38 @@ void ndpi_search_wireguard(struct ndpi_detection_module_struct
       u_int32_t receiver_index = get_u_int32_t(payload, 4);
       if (receiver_index == flow->l4.udp.wireguard_peer_index[1 - packet->packet_direction]) {
         ndpi_set_detected_protocol(ndpi_struct, flow, NDPI_PROTOCOL_WIREGUARD, NDPI_PROTOCOL_UNKNOWN);
-        return;
+      } else {
+        NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
       }
     }
-    return;
+    /* need more packets before deciding */
   } else if (message_type == WG_TYPE_TRANSPORT_DATA) {
-    // TODO
+    /*
+     * For detecting transport data packets, we save the peer
+     * indices in both directions first. This requires at least one packet in each
+     * direction (stages 3-4). The third packet that we process will be checked
+     * against the appropriate index for a match (stage 5).
+     */
+    u_int32_t receiver_index = get_u_int32_t(payload, 4);
+    if (flow->l4.udp.wireguard_stage == 0) {
+      flow->l4.udp.wireguard_stage = 3 + packet->packet_direction;
+      flow->l4.udp.wireguard_peer_index[packet->packet_direction] = receiver_index;
+      /* need more packets before deciding */
+    } else if (flow->l4.udp.wireguard_stage == 4 - packet->packet_direction) {
+      flow->l4.udp.wireguard_peer_index[packet->packet_direction] = receiver_index;
+      flow->l4.udp.wireguard_stage = 5;
+      /* need more packets before deciding */
+    } else if (flow->l4.udp.wireguard_stage == 5) {
+      if (receiver_index == flow->l4.udp.wireguard_peer_index[packet->packet_direction]) {
+        ndpi_set_detected_protocol(ndpi_struct, flow, NDPI_PROTOCOL_WIREGUARD, NDPI_PROTOCOL_UNKNOWN);
+      } else {
+        NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
+      }
+    }
+    /* need more packets before deciding */
+  } else {
+    NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
   }
-
-  NDPI_EXCLUDE_PROTO(ndpi_struct, flow);
-  return;
 }
 
 void init_wireguard_dissector(struct ndpi_detection_module_struct *ndpi_struct, u_int32_t *id, NDPI_PROTOCOL_BITMASK *detection_bitmask)
